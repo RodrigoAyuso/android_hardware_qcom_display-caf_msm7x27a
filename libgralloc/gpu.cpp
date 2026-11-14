@@ -27,6 +27,9 @@
 #include "alloc_controller.h"
 #include <qdMetaData.h>
 #include "mdp_version.h"
+#ifdef LGE_OREO_FB_IMPORT
+#include "lge_fb_import.h"
+#endif
 
 using namespace gralloc;
 
@@ -183,6 +186,12 @@ int gpu_context_t::gralloc_alloc_framebuffer_locked(size_t size, int usage,
         return -EINVAL;
     }
 
+#ifdef LGE_OREO_FB_IMPORT
+    const int result = lge_oreo_fb::allocateLocked(m, pHandle);
+    ALOGE_IF(result, "LGE Oreo FB: allocation failed: %d, mask=%#x", result, m->bufferMask);
+    return result;
+#endif
+
     if (m->framebuffer == NULL) {
         ALOGE("%s: Invalid framebuffer", __FUNCTION__);
         return -EINVAL;
@@ -304,6 +313,14 @@ int gpu_context_t::alloc_impl(int w, int h, int format, int usage,
     int err = 0;
     if(useFbMem) {
         err = gralloc_alloc_framebuffer(size, usage, pHandle);
+#ifdef LGE_OREO_FB_IMPORT
+        if (!err) {
+            const private_module_t* module =
+                reinterpret_cast<const private_module_t*>(common.module);
+            // Exported framebuffer pages use the scanout stride, not GPU padding.
+            alignedw = module->finfo.line_length / (module->info.bits_per_pixel / 8);
+        }
+#endif
     } else {
         err = gralloc_alloc_buffer(size, usage, pHandle, bufferType,
                                    grallocFormat, alignedw, alignedh);
@@ -320,6 +337,9 @@ int gpu_context_t::alloc_impl(int w, int h, int format, int usage,
 int gpu_context_t::free_impl(private_handle_t const* hnd) {
     private_module_t* m = reinterpret_cast<private_module_t*>(common.module);
     if (hnd->flags & private_handle_t::PRIV_FLAGS_FRAMEBUFFER) {
+#ifdef LGE_OREO_FB_IMPORT
+        return lge_oreo_fb::freeAllocation(m, hnd);
+#endif
         const size_t bufferSize = m->finfo.line_length * m->info.yres;
         int index = (hnd->base - m->framebuffer->base) / bufferSize;
         m->bufferMask &= ~(1<<index);

@@ -41,6 +41,9 @@
 #include "alloc_controller.h"
 #include "memalloc.h"
 #include <qdMetaData.h>
+#ifdef LGE_OREO_FB_IMPORT
+#include "lge_fb_import.h"
+#endif
 
 using namespace gralloc;
 /*****************************************************************************/
@@ -140,6 +143,13 @@ int gralloc_register_buffer(gralloc_module_t const* module,
      */
 
     private_handle_t* hnd = (private_handle_t*)handle;
+#ifdef LGE_OREO_FB_IMPORT
+    if (hnd->flags & private_handle_t::PRIV_FLAGS_FRAMEBUFFER) {
+        private_module_t* framebufferModule =
+            reinterpret_cast<private_module_t*>(const_cast<gralloc_module_t*>(module));
+        return lge_oreo_fb::importBuffer(framebufferModule, hnd);
+    }
+#endif
     hnd->base = 0;
     hnd->base_metadata = 0;
     int err = gralloc_map(module, handle);
@@ -164,6 +174,14 @@ int gralloc_unregister_buffer(gralloc_module_t const* module,
      */
 
     private_handle_t* hnd = (private_handle_t*)handle;
+
+#ifdef LGE_OREO_FB_IMPORT
+    if (hnd->flags & private_handle_t::PRIV_FLAGS_FRAMEBUFFER) {
+        private_module_t* framebufferModule =
+            reinterpret_cast<private_module_t*>(const_cast<gralloc_module_t*>(module));
+        return lge_oreo_fb::unregisterBuffer(framebufferModule, hnd);
+    }
+#endif
 
     if (hnd->base != 0) {
         gralloc_unmap(module, handle);

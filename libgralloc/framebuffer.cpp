@@ -35,12 +35,14 @@
 #include <linux/msm_mdp.h>
 
 #include <GLES/gl.h>
+#include <stdint.h>
 
 #include <gralloc_priv.h>
 #include "fb_priv.h"
 #include "gr.h"
 #include <cutils/properties.h>
 #include <profiler.h>
+#include <hardware/legacy_msm_adreno.h>
 
 #define EVEN_OUT(x) if (x & 0x0001) {x--;}
 /** min of int a, b */
@@ -87,6 +89,43 @@ static int fb_post(struct framebuffer_device_t* dev, buffer_handle_t buffer)
         reinterpret_cast<private_module_t*>(dev->common.module);
     private_handle_t *hnd = static_cast<private_handle_t*>
         (const_cast<native_handle_t*>(buffer));
+    if (lge_msm_adreno_enabled()) {
+        if (!hnd || private_handle_t::validate(buffer) || !m->framebuffer ||
+                !(hnd->flags & private_handle_t::PRIV_FLAGS_FRAMEBUFFER) ||
+                !m->finfo.line_length) {
+            ALOGE("LGE Adreno: post requires a valid framebuffer handle and stride");
+            return -EINVAL;
+        }
+        const uintptr_t base = static_cast<uint32_t>(hnd->base);
+        const uintptr_t framebufferBase = static_cast<uint32_t>(m->framebuffer->base);
+        if (base < framebufferBase) {
+            ALOGE("LGE Adreno: buffer precedes the framebuffer mapping");
+            return -EINVAL;
+        }
+        const size_t offset = base - framebufferBase;
+        const size_t page = size_t(m->finfo.line_length) * m->info.yres;
+        if (offset % m->finfo.line_length || !page || page > m->finfo.smem_len ||
+                offset > m->finfo.smem_len - page) {
+            ALOGE("LGE Adreno: framebuffer buffer offset/extent is invalid");
+            return -EINVAL;
+        }
+        struct fb_var_screeninfo info = m->info;
+        info.activate = FB_ACTIVATE_VBL;
+        info.xoffset = 0;
+        info.yoffset = offset / m->finfo.line_length;
+        info.reserved[0] = info.reserved[1] = info.reserved[2] = 0;
+        if (info.yres_virtual < info.yres || info.yoffset > info.yres_virtual - info.yres) {
+            ALOGE("LGE Adreno: framebuffer page exceeds virtual height");
+            return -EINVAL;
+        }
+        if (ioctl(m->framebuffer->fd, FBIOPAN_DISPLAY, &info) < 0) {
+            const int error = errno;
+            ALOGE("LGE Adreno: FBIOPAN_DISPLAY failed: %s", strerror(error));
+            return -error;
+        }
+        m->info = info;
+        return 0;
+    }
     const size_t offset = hnd->base - m->framebuffer->base;
     m->info.activate = FB_ACTIVATE_VBL;
     m->info.yoffset = offset / m->finfo.line_length;
@@ -231,6 +270,12 @@ int mapFrameBufferLocked(struct private_module_t* module)
               info.yres_virtual, info.yres*2);
     }
 
+    if (lge_msm_adreno_enabled()) {
+        // Apply the requested Qualcomm color layout before allocating GPU buffers.
+        // The old code read VSCREENINFO here and discarded its requested format.
+        if (ioctl(fd, FBIOPUT_VSCREENINFO, &info) < 0) return -errno;
+        ALOGI("LGE Adreno: framebuffer format applied; post uses FBIOPAN_DISPLAY");
+    }
     if (ioctl(fd, FBIOGET_VSCREENINFO, &info) == -1)
         return -errno;
 
