@@ -42,7 +42,6 @@
 #include "gr.h"
 #include <cutils/properties.h>
 #include <profiler.h>
-#include <hardware/legacy_msm_adreno.h>
 
 #define EVEN_OUT(x) if (x & 0x0001) {x--;}
 /** min of int a, b */
@@ -89,7 +88,9 @@ static int fb_post(struct framebuffer_device_t* dev, buffer_handle_t buffer)
         reinterpret_cast<private_module_t*>(dev->common.module);
     private_handle_t *hnd = static_cast<private_handle_t*>
         (const_cast<native_handle_t*>(buffer));
-    if (lge_msm_adreno_enabled()) {
+#ifdef LGE_OREO_FB_IMPORT
+    // Use the same framebuffer ABI as the allocator and mapper in this module.
+    {
         if (!hnd || private_handle_t::validate(buffer) || !m->framebuffer ||
                 !(hnd->flags & private_handle_t::PRIV_FLAGS_FRAMEBUFFER) ||
                 !m->finfo.line_length) {
@@ -126,6 +127,7 @@ static int fb_post(struct framebuffer_device_t* dev, buffer_handle_t buffer)
         m->info = info;
         return 0;
     }
+#else
     const size_t offset = hnd->base - m->framebuffer->base;
     m->info.activate = FB_ACTIVATE_VBL;
     m->info.yoffset = offset / m->finfo.line_length;
@@ -135,6 +137,7 @@ static int fb_post(struct framebuffer_device_t* dev, buffer_handle_t buffer)
         return -errno;
     }
     return 0;
+#endif
 }
 
 static int fb_compositionComplete(struct framebuffer_device_t* dev)
@@ -270,12 +273,14 @@ int mapFrameBufferLocked(struct private_module_t* module)
               info.yres_virtual, info.yres*2);
     }
 
-    if (lge_msm_adreno_enabled()) {
+#ifdef LGE_OREO_FB_IMPORT
+    {
         // Apply the requested Qualcomm color layout before allocating GPU buffers.
         // The old code read VSCREENINFO here and discarded its requested format.
         if (ioctl(fd, FBIOPUT_VSCREENINFO, &info) < 0) return -errno;
         ALOGI("LGE Adreno: framebuffer format applied; post uses FBIOPAN_DISPLAY");
     }
+#endif
     if (ioctl(fd, FBIOGET_VSCREENINFO, &info) == -1)
         return -errno;
 
